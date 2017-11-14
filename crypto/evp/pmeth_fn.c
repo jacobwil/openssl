@@ -64,6 +64,11 @@
 #include <openssl/evp.h>
 #include "evp_locl.h"
 
+#include "crypto/engine/eng_int.h"
+#include "crypto/ossl_typ.h"
+
+#include <time.h>
+
 #define M_check_autoarg(ctx, arg, arglen, err) \
         if (ctx->pmeth->flags & EVP_PKEY_FLAG_AUTOARGLEN) \
                 { \
@@ -101,6 +106,7 @@ int EVP_PKEY_sign(EVP_PKEY_CTX *ctx,
                   unsigned char *sig, size_t *siglen,
                   const unsigned char *tbs, size_t tbslen)
 {
+
     if (!ctx || !ctx->pmeth || !ctx->pmeth->sign) {
         EVPerr(EVP_F_EVP_PKEY_SIGN,
                EVP_R_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE);
@@ -110,8 +116,16 @@ int EVP_PKEY_sign(EVP_PKEY_CTX *ctx,
         EVPerr(EVP_F_EVP_PKEY_SIGN, EVP_R_OPERATON_NOT_INITIALIZED);
         return -1;
     }
-    M_check_autoarg(ctx, sig, siglen, EVP_F_EVP_PKEY_SIGN)
-        return ctx->pmeth->sign(ctx, sig, siglen, tbs, tbslen);
+    M_check_autoarg(ctx, sig, siglen, EVP_F_EVP_PKEY_SIGN) {
+            clock_t begin = clock();
+            int ret = ctx->pmeth->sign(ctx, sig, siglen, tbs, tbslen);
+        clock_t end = clock();
+        clock_t time_spent = (end - begin);
+        // Would be really nice if this print statement also included the signing algorithm
+        fprintf(stderr, "SIGNTIME: %lu clocks (%d clocks per second)\n", time_spent, CLOCKS_PER_SEC);
+
+        return ret;
+    }
 }
 
 int EVP_PKEY_verify_init(EVP_PKEY_CTX *ctx)
