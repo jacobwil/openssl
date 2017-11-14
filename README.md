@@ -1,8 +1,14 @@
+NOTE
+======
+This fork of PeterMosmans/openssl has been lightly modified to print out some timing information. It may now be unsuitable to use for various reasons (though the changes are pretty small). Regardless, don't use this in production, etc. 
+
+The Travis CI badge here is actually for this fork: [![Build Status](https://travis-ci.org/jacobwil/openssl.svg?branch=with-timing-info)](https://travis-ci.org/jacobwil/openssl) (linux-x86_64)
+
+ORIGINAL README FOLLOWS
+======
+
 OpenSSL
 ================
-
-Build status for target linux-x86_64: [![Build Status](https://travis-ci.org/PeterMosmans/openssl.svg?branch=1.0.2-chacha)](https://travis-ci.org/PeterMosmans/openssl)
-
 This is a fork of the official OpenSSL github repository at https://github.com/openssl/openssl.git
 
 You're looking at the 1.0.2-chacha branch, which aligns with the
