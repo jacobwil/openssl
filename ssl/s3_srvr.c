@@ -170,6 +170,17 @@
 #endif
 #include <openssl/md5.h>
 
+#include <time.h>
+
+// Print the timing information
+#define PRINTKXTIME {if (0 != start_clock && 0 != stop_clock && 0 != additional_msg) { \
+    clock_t time_spent = stop_clock - start_clock; \
+    fprintf(stderr, "KXTIME: %lu clocks (%d clocks per second). MSG: %s\n", time_spent, CLOCKS_PER_SEC, additional_msg); \
+} else { \
+    fprintf(stderr, "KXTIME: -1 ERROR start_clock, stop_clock, or additional_msg were 0\n"); \
+} \
+free(additional_msg); additional_msg = 0;}
+
 #ifndef OPENSSL_NO_SSL3_METHOD
 static const SSL_METHOD *ssl3_get_server_method(int ver);
 
@@ -2176,7 +2187,7 @@ int ssl3_get_client_key_exchange(SSL *s)
     EC_POINT *clnt_ecpoint = NULL;
     BN_CTX *bn_ctx = NULL;
 #endif
-
+    
     n = s->method->ssl_get_message(s,
                                    SSL3_ST_SR_KEY_EXCH_A,
                                    SSL3_ST_SR_KEY_EXCH_B,
@@ -2188,7 +2199,12 @@ int ssl3_get_client_key_exchange(SSL *s)
 
     alg_k = s->s3->tmp.new_cipher->algorithm_mkey;
 
+    clock_t start_clock = 0;
+    clock_t stop_clock = 0;
+    char *additional_msg = "";
+
 #ifndef OPENSSL_NO_RSA
+    /* RSA key exchange */
     if (alg_k & SSL_kRSA) {
         unsigned char rand_premaster_secret[SSL_MAX_MASTER_KEY_LENGTH];
         int decrypt_len;
@@ -2261,8 +2277,12 @@ int ssl3_get_client_key_exchange(SSL *s)
         if (RAND_bytes(rand_premaster_secret,
                        sizeof(rand_premaster_secret)) <= 0)
             goto err;
+        start_clock = clock();
         decrypt_len =
             RSA_private_decrypt((int)n, p, p, rsa, RSA_PKCS1_PADDING);
+        stop_clock = clock();
+        asprintf(&additional_msg, "kRSA key exchange %lx", alg_k);
+        PRINTKXTIME
         ERR_clear_error();
 
         /*
@@ -2399,8 +2419,20 @@ int ssl3_get_client_key_exchange(SSL *s)
             SSLerr(SSL_F_SSL3_GET_CLIENT_KEY_EXCHANGE, SSL_R_BN_LIB);
             goto err;
         }
-
+        start_clock = clock();
         i = DH_compute_key(p, pub, dh_srvr);
+        stop_clock = clock();
+        if (alg_k & SSL_kEDH) {
+                asprintf(&additional_msg, "kEDH DH key exchange %lx", alg_k);
+        } else if (alg_k & SSL_kDHr) {
+                asprintf(&additional_msg, "kDHr DH key exchange %lx", alg_k);
+        } else if (alg_k & SSL_kDHd) {
+            asprintf(&additional_msg, "kDHd DH key exchange %lx", alg_k);
+        } else {
+            // this really should be unreachable
+            asprintf(&additional_msg, "unknown class DH key exchange %lx", alg_k);
+        }
+        PRINTKXTIME
 
         if (i <= 0) {
             al = SSL_AD_HANDSHAKE_FAILURE;
@@ -2533,7 +2565,8 @@ int ssl3_get_client_key_exchange(SSL *s)
             goto err;
 
         memset(iv, 0, sizeof iv); /* per RFC 1510 */
-
+        
+        start_clock = clock();
         if (!EVP_DecryptInit_ex(&ciph_ctx, enc, NULL, kssl_ctx->key, iv)) {
             SSLerr(SSL_F_SSL3_GET_CLIENT_KEY_EXCHANGE,
                    SSL_R_DECRYPTION_FAILED);
@@ -2559,6 +2592,9 @@ int ssl3_get_client_key_exchange(SSL *s)
             kerr = 1;
             goto kclean;
         }
+        stop_clock = clock();
+        asprintf(&additional_msg, "kKRB5 key exchange %lx", alg_k);
+        PRINTKXTIME
         outl += padl;
         if (outl > SSL_MAX_MASTER_KEY_LENGTH) {
             SSLerr(SSL_F_SSL3_GET_CLIENT_KEY_EXCHANGE,
@@ -2726,8 +2762,22 @@ int ssl3_get_client_key_exchange(SSL *s)
             SSLerr(SSL_F_SSL3_GET_CLIENT_KEY_EXCHANGE, ERR_R_ECDH_LIB);
             goto err;
         }
+        start_clock = clock();
         i = ECDH_compute_key(p, (field_size + 7) / 8, clnt_ecpoint, srvr_ecdh,
                              NULL);
+        stop_clock = clock();
+        if (alg_k & SSL_kEECDH) {
+                asprintf(&additional_msg, "kEECDH ECDH key exchange %lx", alg_k);
+        } else if (alg_k & SSL_kECDHr) {
+                asprintf(&additional_msg, "kECDHr ECDH key exchange %lx", alg_k);
+        } else if (alg_k & SSL_kECDHe) {
+            asprintf(&additional_msg, "kECDHe ECDH key exchange %lx", alg_k);
+        } else {
+            // this really should be unreachable
+            asprintf(&additional_msg, "unknown class ECDH key exchange %lx", alg_k);
+        }
+        PRINTKXTIME
+
         if (i <= 0) {
             SSLerr(SSL_F_SSL3_GET_CLIENT_KEY_EXCHANGE, ERR_R_ECDH_LIB);
             goto err;
@@ -2800,6 +2850,10 @@ int ssl3_get_client_key_exchange(SSL *s)
             goto psk_err;
         }
 
+        // I'm really not sure what to time here since it's a PSK which is way different than 
+        // most of the other key exchanges. 
+
+        start_clock = clock();
         /* create PSK pre_master_secret */
         pre_ms_len = 2 + psk_len + 2 + psk_len;
         t = psk_or_pre_ms;
@@ -2808,6 +2862,9 @@ int ssl3_get_client_key_exchange(SSL *s)
         memset(t, 0, psk_len);
         t += psk_len;
         s2n(psk_len, t);
+        stop_clock = clock();
+        asprintf(&additional_msg, "kPSK key exchange (timing is of PSK pre master secret calculation) %lx", alg_k);
+        PRINTKXTIME
 
         if (s->session->psk_identity != NULL)
             OPENSSL_free(s->session->psk_identity);
@@ -2956,7 +3013,12 @@ int ssl3_get_client_key_exchange(SSL *s)
 				}
 
 			/* decode in place into p */
+            start_clock = clock();
 			decrypt_len = RSA_private_decrypt(epms_len, p, p, rsa, RSA_PKCS1_PADDING);
+            stop_clock = clock();
+            asprintf(&additional_msg, "kRSAPSK key exchange (timed only the RSA_private_decrypt call) %lx", alg_k);
+            PRINTKXTIME
+
 			decrypt_good = constant_time_eq_int_8(decrypt_len, 48);
 
 			/* check the version sent by the client */
@@ -3116,8 +3178,14 @@ int ssl3_get_client_key_exchange(SSL *s)
         }
         start = p;
         inlen = Tlen;
-        if (EVP_PKEY_decrypt
-            (pkey_ctx, premaster_secret, &outlen, start, inlen) <= 0) {
+        start_clock = clock();
+        int pkey_ret = EVP_PKEY_decrypt
+            (pkey_ctx, premaster_secret, &outlen, start, inlen);
+        stop_clock = clock();
+        asprintf(&additional_msg, "kGOST key exchange %lx", alg_k);
+        PRINTKXTIME
+
+        if (pkey_ret <= 0) {
             SSLerr(SSL_F_SSL3_GET_CLIENT_KEY_EXCHANGE,
                    SSL_R_DECRYPTION_FAILED);
             goto gerr;
